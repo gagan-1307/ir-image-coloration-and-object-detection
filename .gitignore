@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+venv/
+env/
+
+# Data & model artifacts (too large for git; keep in Drive/local, not GitHub)
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+checkpoints/*.pth
+checkpoints/*.pt
+outputs/*.png
+outputs/*.tif
+outputs/*.tiff
+
+# OS / editor
+.DS_Store
+.vscode/
