@@ -173,7 +173,8 @@ class IRColorizationDataset(Dataset):
     """PyTorch Dataset that loads pre-tiled .npz files produced by
     build_tile_dataset()."""
 
-    def __init__(self, processed_dir, file_list=None):
+    def __init__(self, processed_dir, file_list=None, filter_blank=True,
+                 blank_std_threshold=0.02, enhance_contrast=True, gamma=1.3):
         self.processed_dir = processed_dir
         if file_list is not None:
             self.files = file_list
@@ -185,14 +186,57 @@ class IRColorizationDataset(Dataset):
                 f"Run build_tile_dataset() first."
             )
 
+        if filter_blank:
+            self.files = self._filter_blank_tiles(self.files, blank_std_threshold)
+
+        self.enhance_contrast = enhance_contrast
+        self.gamma = gamma
+
+    @staticmethod
+    def _filter_blank_tiles(files, std_threshold):
+        """Drop tiles where the RGB target is near-constant (e.g. black padding
+        from scene rotation edges). Scans once at dataset construction time."""
+        kept = []
+        dropped = 0
+        for f in files:
+            data = np.load(f)
+            rgb = data["rgb"]
+            if rgb.std() > std_threshold:
+                kept.append(f)
+            else:
+                dropped += 1
+        if dropped:
+            print(f"Filtered out {dropped} blank/near-constant tiles "
+                  f"({len(kept)} remaining).")
+        return kept
+
+    @staticmethod
+    def _contrast_stretch(rgb, gamma, low_pct=2, high_pct=98):
+        """Per-tile, per-channel percentile stretch + gamma correction, to
+        counter Landsat Level-1 atmospheric haze (pale, low-contrast look).
+        Operates on a (3, H, W) numpy array in [0, 1], returns [0, 1]."""
+        out = np.empty_like(rgb)
+        for c in range(rgb.shape[0]):
+            channel = rgb[c]
+            lo, hi = np.percentile(channel, [low_pct, high_pct])
+            if hi - lo < 1e-6:
+                out[c] = channel
+            else:
+                out[c] = np.clip((channel - lo) / (hi - lo), 0, 1)
+        out = np.power(out, gamma)  # gamma < 1 brightens, > 1 adds contrast/saturates
+        return out
+
     def __len__(self):
         return len(self.files)
 
     def __getitem__(self, idx):
         data = np.load(self.files[idx])
-        ir = torch.from_numpy(data["ir"]).float()      # (4, H, W)
-        rgb = torch.from_numpy(data["rgb"]).float()     # (3, H, W)
-        indices = torch.from_numpy(data["idx"]).float() # (3, H, W) NDVI/NDWI/NDBI
+        ir = torch.from_numpy(data["ir"]).float()       # (4, H, W)
+        rgb_arr = data["rgb"]                             # (3, H, W), numpy
+        if self.enhance_contrast:
+            rgb_arr = self._contrast_stretch(rgb_arr, self.gamma)
+        rgb = torch.from_numpy(rgb_arr.astype(np.float32))
+        indices = torch.from_numpy(data["idx"]).float()  # (3, H, W) NDVI/NDWI/NDBI
         return ir, rgb, indices
 
 
